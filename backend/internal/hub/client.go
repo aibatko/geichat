@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"github.com/gorilla/websocket"
 	"log"
 	"sync"
@@ -13,6 +14,7 @@ type Client struct {
 	Send     chan []byte
 	Username string
 	RoomID   string
+	Store    MessageStore
 	mu       sync.Mutex
 }
 
@@ -51,6 +53,14 @@ func (c *Client) ReadPump() {
 			Username:  c.Username,
 			Content:   string(message),
 			Timestamp: time.Now().Unix(),
+		}
+		if c.Store != nil {
+			_ = c.Store.Save(context.Background(), StoredMessage{
+				ChannelID: c.RoomID,
+				Username:  c.Username,
+				Content:   string(message),
+				Timestamp: time.Now(),
+			})
 		}
 	}
 }
