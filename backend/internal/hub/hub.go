@@ -53,16 +53,31 @@ func (h *Hub) registerClient(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	room := h.findAvailableRoom()
-	if room == nil {
-		roomID := uuid.New().String()
-		room = &Room{
-			ID:       roomID,
-			Name:     fmt.Sprintf("Room %s", roomID[:8]),
-			Players:  make([]string, 0),
-			Capacity: h.MaxPlayers,
+	var room *Room
+	if client.RoomID != "" {
+		room = h.Rooms[client.RoomID]
+		if room == nil {
+			room = &Room{
+				ID:       client.RoomID,
+				Name:     fmt.Sprintf("Room %s", client.RoomID[:8]),
+				Players:  make([]string, 0),
+				Capacity: h.MaxPlayers,
+			}
+			h.Rooms[client.RoomID] = room
 		}
-		h.Rooms[roomID] = room
+	} else {
+		room = h.findAvailableRoom()
+		if room == nil {
+			roomID := uuid.New().String()
+			room = &Room{
+				ID:       roomID,
+				Name:     fmt.Sprintf("Room %s", roomID[:8]),
+				Players:  make([]string, 0),
+				Capacity: h.MaxPlayers,
+			}
+			h.Rooms[roomID] = room
+		}
+		client.RoomID = room.ID
 	}
 
 	room.Players = append(room.Players, client.Username)
