@@ -17,3 +17,9 @@ type Message struct {
 	Content   string             `bson:"content" json:"content"`
 	Timestamp time.Time          `bson:"timestamp" json:"timestamp"`
 }
+
+type Group struct {
+	ID      primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Name    string             `bson:"name" json:"name"`
+	Members []string           `bson:"members" json:"members"`
+}

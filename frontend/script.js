@@ -1,200 +1,146 @@
-let isSignIn = false;
-let authModal;
-
-let ws;
-let authToken;
+let token = null;
+let currentGroupId = null;
+let ws = null;
+let signInMode = false;
 
 document.addEventListener('DOMContentLoaded', () => {
-    authModal = new bootstrap.Modal(document.getElementById('authModal'));
-    checkAuth();
-
     document.getElementById('authForm').addEventListener('submit', handleAuth);
+    document.getElementById('toggleAuth').addEventListener('click', toggleMode);
+    document.getElementById('signOutBtn').addEventListener('click', signOut);
+    document.getElementById('newGroupBtn').addEventListener('click', newGroup);
+    document.getElementById('sendBtn').addEventListener('click', sendMessage);
+    document.getElementById('inviteBtn').addEventListener('click', inviteUser);
+    checkStoredAuth();
 });
 
-function checkAuth() {
-    authToken = localStorage.getItem('token') || sessionStorage.getItem('token');
-    if (!authToken) {
-        showAuthModal();
-    } else {
-        const username = localStorage.getItem('username') || sessionStorage.getItem('username');
-        updateUIForAuth(username);
-    }
+function toggleMode() {
+    signInMode = !signInMode;
+    document.getElementById('authTitle').textContent = signInMode ? 'Sign In' : 'Create Account';
+    document.getElementById('toggleAuth').textContent = signInMode ? 'Create account' : 'Sign In';
 }
 
-function updateUIForAuth(username) {
-    document.getElementById('username').textContent = username;
-    document.getElementById('userInfo').classList.remove('d-none');
-    document.getElementById('playButton').onclick = startGame;
-}
-
-function updateUIForUnauth() {
-    document.getElementById('userInfo').classList.add('d-none');
-    document.getElementById('playButton').onclick = showAuthModal;
-    showAuthModal();
-}
-
-function showAuthModal() {
-    document.getElementById('authModalTitle').textContent = isSignIn ? 'SIGN IN' : 'CREATE ACCOUNT';
-    authModal.show();
-}
-
-function toggleAuthMode() {
-    isSignIn = !isSignIn;
-    document.getElementById('authModalTitle').textContent = isSignIn ? 'SIGN IN' : 'CREATE ACCOUNT';
-    const switchButton = document.querySelector('.switch-auth-button');
-    switchButton.textContent = isSignIn ? 'New player? Create Account' : 'Already have an account? Sign In';
-}
-
-async function handleAuth(e) {
+function handleAuth(e) {
     e.preventDefault();
-
     const username = document.getElementById('usernameInput').value;
     const password = document.getElementById('passwordInput').value;
-    const rememberMe = document.getElementById('rememberMe').checked;
+    const endpoint = signInMode ? 'signin' : 'signup';
+    fetch(`/api/auth/${endpoint}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username, password})
+    }).then(r => {
+        if (!r.ok) throw new Error('failed');
+        return r.json();
+    }).then(d => {
+        token = d.token;
+        localStorage.setItem('token', token);
+        localStorage.setItem('username', username);
+        showApp();
+    }).catch(() => alert('Auth failed'));
+}
 
-    const endpoint = isSignIn ? 'signin' : 'signup';
-
-    try {
-        const response = await fetch(`${location.protocol}//localhost:8080/api/auth/${endpoint}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ username, password }),
-        });
-
-        if (response.ok) {
-            const {token} = await response.json();
-            const storage = rememberMe ? localStorage : sessionStorage;
-
-            authToken = token;
-            storage.setItem('token', token);
-            storage.setItem('username', username);
-
-            updateUIForAuth(username);
-            authModal.hide();
-            document.getElementById('authForm').reset();
-        } else {
-            const message = isSignIn ? 'Invalid credentials' : 'Username already exists';
-            showGameAlert(message);
-        }
-    } catch (error) {
-        showGameAlert('Connection error! Try again.');
+function checkStoredAuth() {
+    token = localStorage.getItem('token');
+    if (token) {
+        showApp();
     }
 }
 
-function showGameAlert(message) {
-    const alertDiv = document.createElement('div');
-    alertDiv.className = 'game-alert';
-    alertDiv.textContent = message;
-    document.querySelector('.modal-body').prepend(alertDiv);
-
-    setTimeout(() => alertDiv.remove(), 3000);
+function showApp() {
+    document.getElementById('authSection').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    document.getElementById('welcome').textContent = 'Hello ' + localStorage.getItem('username');
+    loadGroups();
 }
 
 function signOut() {
-    authToken = null;
-    localStorage.removeItem('token');
-    localStorage.removeItem('username');
-    sessionStorage.removeItem('token');
-    sessionStorage.removeItem('username');
-    updateUIForUnauth();
+    token = null;
+    localStorage.clear();
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('authSection').style.display = 'block';
 }
 
-
-function startGame() {
-    showChatPanel();
-    connectWebSocket();
+function loadGroups() {
+    fetch('/api/groups', {headers: {Authorization: 'Bearer ' + token}})
+        .then(r => r.json())
+        .then(groups => {
+            const list = document.getElementById('groupList');
+            list.innerHTML = '';
+            groups.forEach(g => {
+                const li = document.createElement('li');
+                li.className = 'list-group-item list-group-item-action';
+                li.textContent = g.name;
+                li.onclick = () => openGroup(g.id, g.name);
+                list.appendChild(li);
+            });
+        });
 }
 
-function showChatPanel() {
-    document.getElementById('mainScreen').classList.add('d-none');
-    document.getElementById('chatPanel').classList.remove('d-none');
+function newGroup() {
+    const name = prompt('Group name?');
+    if (!name) return;
+    fetch('/api/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({name})
+    }).then(r => r.json()).then(loadGroups);
 }
 
-function closeChatPanel() {
-    document.getElementById('mainScreen').classList.remove('d-none');
-    document.getElementById('chatPanel').classList.add('d-none');
+function openGroup(id, name) {
+    currentGroupId = id;
+    document.getElementById('currentGroup').textContent = name;
+    document.getElementById('chatSection').style.display = 'block';
+    document.getElementById('groupSection').style.display = 'none';
+    connectWS();
+    loadMessages();
+}
+
+function connectWS() {
+    if (ws) ws.close();
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/api/ws?token=${token}&channel=${currentGroupId}`);
+    ws.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'message') addMessage(msg.username, msg.content);
+    };
 }
 
 function sendMessage() {
-    const input = document.getElementById('chatInput');
-    const message = input.value.trim();
-
-    if (message && ws) {
-        ws.send(JSON.stringify({
-            type: 'message',
-            content: message
-        }));
-
-        input.value = '';
-    }
+    const input = document.getElementById('messageInput');
+    const text = input.value.trim();
+    if (!text || !ws) return;
+    ws.send(text);
+    input.value = '';
 }
 
-
-function connectWebSocket() {
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//localhost:8080/api/ws?token=${authToken}`;
-
-    const wsClient = new WebSocket(wsUrl);
-    wsClient.onopen = () => {
-        console.log('Connected to WebSocket');
-    };
-
-    ws = wsClient;
-
-    ws.onmessage = (event) => {
-        const message = JSON.parse(event.data);
-        handleWebSocketMessage(message);
-    };
-
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        alert('WebSocket error: Press F12 for more info');
-        closeChatPanel();
-    };
-
-    ws.onclose = (event) => {
-        console.log('Disconnected from WebSocket:', event.code, event.reason);
-        closeChatPanel();
-        ws = null;
-    };
+function addMessage(user, text) {
+    const box = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.textContent = user + ': ' + text;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
 }
 
-function handleWebSocketMessage(message) {
-    switch (message.type) {
-        case 'player_joined':
-            addSystemMessage(`${message.username} joined the room`);
-            break;
-        case 'player_left':
-            addSystemMessage(`${message.username} left the room`);
-            break;
-        case 'message':
-            addChatMessage(message.username, JSON.parse(message.content).content);
-            break;
-    }
+function loadMessages(before) {
+    let url = `/api/messages?channel=${currentGroupId}`;
+    if (before) url += `&before=${before}`;
+    fetch(url)
+        .then(r => r.json())
+        .then(msgs => {
+            const box = document.getElementById('messages');
+            box.innerHTML = '';
+            msgs.forEach(m => addMessage(m.username, m.content));
+        });
 }
 
-function addSystemMessage(message) {
-    const chatMessages = document.getElementById('chatMessages');
-    const messageDiv = document.createElement('div');
-
-    messageDiv.classList.add('system-message');
-    messageDiv.textContent = message;
-
-    chatMessages.appendChild(messageDiv);
-
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-function addChatMessage(sender, message) {
-    const chatMessages = document.getElementById('chatMessages');
-    const messageDiv = document.createElement('div');
-
-    messageDiv.classList.add('chat-message');
-    messageDiv.innerHTML = `<strong>${sender}:</strong> ${message}`;
-
-    chatMessages.appendChild(messageDiv);
-
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+function inviteUser() {
+    const user = prompt('Username to invite');
+    if (!user) return;
+    fetch(`/api/groups/${currentGroupId}/invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({username: user})
+    }).then(r => {
+        if (!r.ok) alert('Failed to invite');
+    });
 }

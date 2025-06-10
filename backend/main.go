@@ -28,6 +28,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(db)
 	roomHandler := handlers.NewRoomHandler(10, mongoStore)
 	channelHandler := &handlers.ChannelHandler{Store: mongoStore}
+	groupHandler := &handlers.GroupHandler{Store: mongoStore}
 	roomHandler.Start()
 
 	r := mux.NewRouter()
@@ -37,6 +38,9 @@ func main() {
 	r.HandleFunc("/api/ws", roomHandler.HandleWebSocket).Methods("GET")
 	r.HandleFunc("/api/channels", channelHandler.CreateChannel).Methods("POST")
 	r.HandleFunc("/api/messages", channelHandler.ListMessages).Methods("GET")
+	r.HandleFunc("/api/groups", groupHandler.CreateGroup).Methods("POST")
+	r.HandleFunc("/api/groups", groupHandler.ListGroups).Methods("GET")
+	r.HandleFunc("/api/groups/{id}/invite", groupHandler.Invite).Methods("POST")
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:8080"},
