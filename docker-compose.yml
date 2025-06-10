@@ -20,6 +20,13 @@ services:
     networks:
       - app-network
 
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    networks:
+      - app-network
+
   db:
     build: ./db
     env_file:
